@@ -1,0 +1,60 @@
+name: Mumble
+options:
+  bundleIdPrefix: nz.olly
+  deploymentTarget:
+    macOS: "26.0"
+  createIntermediateGroups: true
+packages:
+  KeyboardShortcuts:
+    url: https://github.com/sindresorhus/KeyboardShortcuts
+    from: 3.1.0
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    # Signed to run locally by default. scripts/install.sh signs with your Apple Development certificate
+    # if you have one, so macOS keeps the microphone and Accessibility permissions across rebuilds.
+    CODE_SIGN_STYLE: Manual
+    CODE_SIGN_IDENTITY: "-"
+    ENABLE_HARDENED_RUNTIME: NO
+targets:
+  Mumble:
+    type: application
+    platform: macOS
+    sources: [Mumble]
+    dependencies:
+      - package: KeyboardShortcuts
+    info:
+      path: Mumble/Resources/Info.plist
+      properties:
+        CFBundleDisplayName: Mumble
+        LSUIElement: true
+        LSApplicationCategoryType: public.app-category.productivity
+        NSHumanReadableCopyright: ""
+        NSMicrophoneUsageDescription: "Mumble listens while you hold the shortcut and turns what you say into text. The audio stays on your Mac."
+        NSSpeechRecognitionUsageDescription: "Mumble turns what you say into text on your Mac."
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: nz.olly.Mumble
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        GENERATE_INFOPLIST_FILE: NO
+  MumbleTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources: [MumbleTests]
+    dependencies:
+      - target: Mumble
+    settings:
+      base:
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Mumble.app/Contents/MacOS/Mumble"
+        BUNDLE_LOADER: "$(TEST_HOST)"
+        GENERATE_INFOPLIST_FILE: YES
+schemes:
+  Mumble:
+    build:
+      targets:
+        Mumble: all
+        MumbleTests: [test]
+    test:
+      targets: [MumbleTests]

@@ -11,6 +11,7 @@ struct SoundMuterTests {
         defaults.set(false, forKey: SystemSoundMuter.settingKey)
         let muter = SystemSoundMuter(defaults: defaults)
         muter.mute()
+        muter.waitUntilDone()
         #expect(defaults.data(forKey: "mutedOutput") == nil)
         muter.restore()
     }

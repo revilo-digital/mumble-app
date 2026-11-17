@@ -76,15 +76,31 @@ final class FakeClipboard: Clipboard {
 @MainActor
 final class FakeMicrophone: AudioSource {
     private(set) var isRecording = false
+    /// Fails straight away.
     var fails = false
+    /// Never sends any sound, like a stuck or unplugged device.
+    var silent = false
     private var onChunk: (@Sendable (AudioChunk) -> Void)?
+    private var onFailure: (@MainActor @Sendable (Error) -> Void)?
 
-    func start(onChunk: @escaping @Sendable (AudioChunk) -> Void, onLevel: @escaping @Sendable (Float) -> Void) throws {
+    func start(
+        onChunk: @escaping @Sendable (AudioChunk) -> Void,
+        onLevel: @escaping @Sendable (Float) -> Void,
+        onFailure: @escaping @MainActor @Sendable (Error) -> Void
+    ) throws {
         if fails { throw MicrophoneError.noInput }
         isRecording = true
         self.onChunk = onChunk
+        self.onFailure = onFailure
+        guard !silent else { return }
         let format = AVAudioFormat(standardFormatWithSampleRate: 16_000, channels: 1)!
+        onLevel(0.5)
         onChunk(AudioChunk(buffer: AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 16)!))
+    }
+
+    /// The device turned out not to work after starting.
+    func failLater() {
+        onFailure?(MicrophoneError.noInput)
     }
 
     func stop() {

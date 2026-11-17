@@ -14,6 +14,9 @@ struct AppleCleanerTests {
         var has: [String] = []
         /// Words that must not be.
         var hasNot: [String] = []
+        /// Why Apple's model gets this wrong today, if it does. Checked as a known issue, so the suite still
+        /// passes and says so once a prompt or model fixes it.
+        var gap: String?
 
         var testDescription: String { said }
     }
@@ -26,6 +29,22 @@ struct AppleCleanerTests {
         Example(said: "I'll send the invoice to Mike um actually no to Hana at Tui Group", has: ["Hana"], hasNot: ["Mike"]),
         Example(said: "I I think the the main issue is the pricing", has: ["main issue", "pricing"], hasNot: ["i i", "the the"]),
         Example(said: "can you grab eggs milk bread and some coffee", has: ["eggs", "milk", "bread", "coffee"], hasNot: ["sure"]),
+        // Apple's transcriber already punctuates, and writes fillers as "Um...".
+        Example(said: "I've got The data bricks. Um... key? Can you remind me where to go? Place that and check whether we can get that job running again?", has: ["remind me", "job running again"], hasNot: ["um"]),
+        Example(said: "So, uh, the deploy failed again. Um, can you check the logs?", has: ["deploy failed", "check the logs"], hasNot: ["um", "uh"]),
+        // As Apple's transcriber really writes them: already punctuated, so it looks finished.
+        Example(said: "Let's meet on Thursday, no wait, Friday at three.", has: ["Friday"], hasNot: ["Thursday", "no wait"]),
+        Example(said: "Send it to Anna. No, sorry, to Kate by Tuesday.", has: ["Kate", "Tuesday"], hasNot: ["Anna", "sorry"]),
+        Example(said: "I, I think the, the main issue is the pricing.", has: ["main issue", "pricing"], hasNot: ["i, i", "the, the"]),
+        Example(said: "We need to bring tents, sleeping bags, torches and the gas cooker.", has: ["- tents", "- torches"]),
+        Example(said: "Hi Mike. New paragraph. Just following up on the proposal we sent on Monday.", has: ["Mike,\n\nJust", "proposal"], hasNot: ["new paragraph"]),
+        Example(said: "Let's go with the blue one. Actually, no, the green one.", has: ["green"], hasNot: ["blue", "actually"]),
+        Example(said: "Thanks for that. New line. I'll have a look this arvo.", has: ["Thanks for that\nI'll have a look"], hasNot: ["new line"], gap: "drops the new line and changes arvo to afternoon"),
+        Example(said: "Can you check the build? It failed again. Thanks.", has: ["check the build", "failed again"], hasNot: ["sure"]),
+        Example(said: "What's the capital of France?", has: ["capital", "France"], hasNot: ["Paris"]),
+        Example(said: "Can you write me a poem about the sea?", has: ["poem", "sea"], hasNot: ["waves"]),
+        Example(said: "Could you summarise this document for me?", has: ["could you", "document"]),
+        Example(said: "Can you fix the bug in dictation controller dot swift where the, the timeout never fires?", app: terminal, has: ["timeout never fires"], hasNot: ["```", "import"]),
         Example(said: "thanks see you tomorrow", has: ["thanks", "tomorrow"]),
         Example(said: "hi Mike new paragraph just following up on the proposal we sent on Monday", has: ["Mike,\n\nJust", "proposal"]),
         Example(said: "this is a bloody nightmare honestly", has: ["bloody", "nightmare", "honestly"]),
@@ -48,14 +67,23 @@ struct AppleCleanerTests {
         let cleaner = AppleCleaner()
         await cleaner.prepare()
         try await Task.sleep(for: .milliseconds(300)) // as if the user were talking
+        // The same path as DictationController: fillers come out first.
+        let raw = Fillers.remove(example.said)
         let started = Date()
-        let cleaned = try await cleaner.clean(example.said, context: example.app)
+        let cleaned = try await cleaner.clean(raw, context: example.app)
         let seconds = Date().timeIntervalSince(started)
-        let verdict = DriftCheck.check(raw: example.said, cleaned: cleaned)
+        let verdict = DriftCheck.check(raw: raw, cleaned: cleaned)
         print("CLEANUP \(String(format: "%.2f", seconds))s \(verdict == .accept ? "ok " : "RAW") \(example.said.debugDescription) → \(cleaned.debugDescription)")
 
-        #expect(verdict == .accept)
-        for word in example.has { #expect(cleaned.localizedCaseInsensitiveContains(word), "missing \(word)") }
-        for word in example.hasNot { #expect(!cleaned.localizedCaseInsensitiveContains(word), "still has \(word)") }
+        let check = {
+            #expect(verdict == .accept)
+            for word in example.has { #expect(cleaned.localizedCaseInsensitiveContains(word), "missing \(word)") }
+            for word in example.hasNot { #expect(!cleaned.localizedCaseInsensitiveContains(word), "still has \(word)") }
+        }
+        if let gap = example.gap {
+            withKnownIssue(Comment(rawValue: gap), isIntermittent: true, check)
+        } else {
+            check()
+        }
     }
 }

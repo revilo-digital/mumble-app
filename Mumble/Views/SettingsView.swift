@@ -16,6 +16,7 @@ struct SettingsView: View {
             ForEach(TalkAction.allCases) { action in
                 ShortcutSection(action: action, shortcuts: shortcuts, mouseAllowed: permissions.accessibility)
             }
+            MicrophoneSection()
             CustomWordsSection(customWords: customWords, lastHeard: controller.lastHeard)
             Section {
                 Toggle("Open at login", isOn: $openAtLogin)
@@ -177,6 +178,54 @@ private struct RecordingRow: View {
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
+    }
+}
+
+/// Which mic to record from, and which one that means right now.
+private struct MicrophoneSection: View {
+    @AppStorage(MicrophoneChoice.settingKey) private var savedUID = ""
+    @AppStorage(MicrophoneChoice.nameKey) private var savedName = ""
+    @State private var devices = InputDevices.all()
+    @State private var lidClosed = InputDevices.lidClosed
+    @State private var inUse = MicrophoneChoice.current()
+
+    var body: some View {
+        Section {
+            Picker("Microphone", selection: $savedUID) {
+                Text("Automatic").tag("")
+                Divider()
+                ForEach(devices) { device in
+                    Text(lidClosed && device.isBuiltIn ? "\(device.name) (lid closed)" : device.name)
+                        .tag(device.uid)
+                }
+                if !savedUID.isEmpty, !devices.contains(where: { $0.uid == savedUID }) {
+                    Text("\(savedName.isEmpty ? "Saved mic" : savedName) (not connected)").tag(savedUID)
+                }
+            }
+            .onChange(of: savedUID) { _, uid in
+                if let device = devices.first(where: { $0.uid == uid }) { savedName = device.name }
+                refresh()
+            }
+            if let inUse {
+                Text("Using \(inUse.name)")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+        } header: {
+            Text("Microphone")
+        } footer: {
+            Text("Automatic uses the input chosen in Sound settings. While the lid is closed, another connected mic is used instead of the built-in one.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .onReceive(Timer.publish(every: 2, on: .main, in: .common).autoconnect()) { _ in refresh() }
+    }
+
+    private func refresh() {
+        devices = InputDevices.all()
+        lidClosed = InputDevices.lidClosed
+        inUse = MicrophoneChoice.current()
     }
 }
 

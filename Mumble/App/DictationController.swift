@@ -41,6 +41,12 @@ final class DictationController {
     @ObservationIgnored private let finishTimeout: Duration
     /// How long ⌃ ⌥ ⌘ ⇧ must be held on their own before listening starts.
     @ObservationIgnored private let modifierHold: Duration
+    /// Gives up if the microphone hasn't sent any sound this long after starting.
+    @ObservationIgnored private let microphoneTimeout: Duration
+    /// Some sound has arrived from the microphone in this dictation.
+    @ObservationIgnored private var heardAudio = false
+    /// Checks the microphone got going, so tests can wait for it.
+    @ObservationIgnored private(set) var pendingMicrophoneCheck: Task<Void, Never>?
     /// Starts listening once a modifier key has been held long enough, so tests can wait for it.
     @ObservationIgnored private(set) var pendingHold: Task<Void, Never>?
     /// When a modifier key was last tapped on its own, to spot a double tap.
@@ -85,7 +91,8 @@ final class DictationController {
         noticeDuration: Duration = .seconds(2.5),
         doubleTapWindow: Duration = .milliseconds(400),
         finishTimeout: Duration = .seconds(10),
-        modifierHold: Duration = .milliseconds(250)
+        modifierHold: Duration = .milliseconds(250),
+        microphoneTimeout: Duration = .seconds(3)
     ) {
         self.transcriber = transcriber
         self.microphone = microphone
@@ -98,6 +105,7 @@ final class DictationController {
         self.doubleTapWindow = doubleTapWindow
         self.finishTimeout = finishTimeout
         self.modifierHold = modifierHold
+        self.microphoneTimeout = microphoneTimeout
     }
 
     func shortcutDown() {
@@ -233,12 +241,17 @@ final class DictationController {
         startedByModifier = false
         clearTapWait()
 
+        heardAudio = false
+        let generation = generation
         let (stream, continuation) = AsyncStream.makeStream(of: AudioChunk.self)
         do {
             try microphone.start(
                 onChunk: { continuation.yield($0) },
                 onLevel: { [weak self] level in
-                    Task { @MainActor in self?.level = level }
+                    Task { @MainActor in self?.heard(level, generation: generation) }
+                },
+                onFailure: { [weak self] _ in
+                    self?.microphoneFailed("didn't start", generation: generation)
                 }
             )
         } catch {
@@ -252,6 +265,26 @@ final class DictationController {
         transcription = Task { [transcriber] in try await transcriber.transcribe(stream, hints: hints) }
         phase = .listening
         Log.dictation.notice("Listening")
+        pendingMicrophoneCheck?.cancel()
+        pendingMicrophoneCheck = Task { [microphoneTimeout] in
+            try? await Task.sleep(for: microphoneTimeout)
+            guard !Task.isCancelled, !heardAudio else { return }
+            microphoneFailed("sent no sound", generation: generation)
+        }
+    }
+
+    private func heard(_ level: Float, generation: Int) {
+        guard generation == self.generation else { return }
+        heardAudio = true
+        if phase == .listening { self.level = level }
+    }
+
+    /// The microphone never got going (stuck or unplugged), so stop rather than listen to nothing.
+    private func microphoneFailed(_ reason: String, generation: Int) {
+        guard generation == self.generation, phase == .listening else { return }
+        Log.dictation.error("Microphone \(reason, privacy: .public)")
+        abandon()
+        showNotice("Can't use the microphone")
     }
 
     /// Stops listening and inserts the text (✓, or letting go).
@@ -315,11 +348,11 @@ final class DictationController {
         }
     }
 
-    /// Every dictation is cleaned up. If the cleaner fails, takes too long or strays from what was said,
-    /// the raw text goes in instead.
-    private func cleanUp(_ raw: String, context: CleanupContext) async -> String {
-        guard let cleaner else { return raw }
-        if DriftCheck.isOnlyFillers(raw) { return "" }
+    /// Every dictation is cleaned up. Fillers always come out; if the cleaner fails, takes too long or strays
+    /// from what was said, the raw text (without fillers) goes in instead.
+    private func cleanUp(_ heard: String, context: CleanupContext) async -> String {
+        let raw = Fillers.remove(heard)
+        guard let cleaner, !raw.isEmpty else { return raw }
         let started = now()
         let work = Task { try await cleaner.clean(raw, context: context) }
         let result: Result<String, Error>? = await withCheckedContinuation { continuation in
@@ -365,6 +398,13 @@ final class DictationController {
     /// Stops without inserting anything (✕ or Esc).
     func cancel() {
         guard phase == .listening || phase == .working else { return }
+        abandon()
+        phase = .idle
+        Log.dictation.notice("Cancelled")
+    }
+
+    /// Drops the dictation in progress without inserting anything.
+    private func abandon() {
         generation += 1
         clearTapWait()
         stopListening()
@@ -372,11 +412,10 @@ final class DictationController {
         transcription = nil
         target = nil
         level = 0
-        phase = .idle
-        Log.dictation.notice("Cancelled")
     }
 
     private func stopListening() {
+        pendingMicrophoneCheck?.cancel()
         microphone.stop()
         muter?.restore()
         audio?.finish()

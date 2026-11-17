@@ -87,6 +87,49 @@ struct DictationControllerTests {
         #expect(system.directInserts.isEmpty)
     }
 
+    @Test func aMicrophoneThatSendsNoSoundGivesUp() async {
+        microphone.silent = true
+        let controller = DictationController(
+            transcriber: FakeTranscriber(text: "Hello there."),
+            microphone: microphone,
+            inserter: TextInserter(system: system, clipboard: clipboard, restoreDelay: .zero),
+            muter: muter,
+            now: { [clock] in clock.now },
+            noticeDuration: .seconds(60),
+            microphoneTimeout: .milliseconds(20)
+        )
+        controller.shortcutDown()
+        #expect(controller.phase == .listening)
+        await controller.pendingMicrophoneCheck?.value
+        #expect(controller.phase == .notice("Can't use the microphone"))
+        #expect(!microphone.isRecording)
+        #expect(!muter.isMuted)
+        #expect(system.directInserts.isEmpty)
+    }
+
+    @Test func aMicrophoneThatSendsSoundKeepsListening() async {
+        let controller = DictationController(
+            transcriber: FakeTranscriber(text: "Hello there."),
+            microphone: microphone,
+            inserter: TextInserter(system: system, clipboard: clipboard, restoreDelay: .zero),
+            now: { [clock] in clock.now },
+            microphoneTimeout: .milliseconds(20)
+        )
+        controller.shortcutDown()
+        await controller.pendingMicrophoneCheck?.value
+        #expect(controller.phase == .listening)
+        #expect(microphone.isRecording)
+    }
+
+    @Test func aMicrophoneThatFailsAfterStartingStops() {
+        let controller = makeController()
+        controller.shortcutDown()
+        microphone.failLater()
+        #expect(controller.phase == .notice("Can't use the microphone"))
+        #expect(!microphone.isRecording)
+        #expect(!muter.isMuted)
+    }
+
     @Test func holdingAModifierKeyStartsAfterAMoment() async {
         let controller = makeController()
         controller.modifierDown()
@@ -320,12 +363,16 @@ struct CleanupStepTests {
 
     @Test func insertsTheCleanedText() async {
         let cleaner = FakeCleaner(.transform { $0.replacingOccurrences(of: "um, ", with: "") })
-        #expect(await dictate("um, see you Thursday.", cleaner: cleaner) == ["see you Thursday."])
+        #expect(await dictate("um, see you Thursday.", cleaner: cleaner) == ["See you Thursday."])
         #expect(await cleaner.prepared == 1)
     }
 
     @Test func usesTheRawTextWhenCleanupFails() async {
         #expect(await dictate("See you Thursday.", cleaner: FakeCleaner(.fail)) == ["See you Thursday."])
+    }
+
+    @Test func takesOutFillersEvenWhenCleanupFails() async {
+        #expect(await dictate("Um, see you, uh, Thursday.", cleaner: FakeCleaner(.fail)) == ["See you Thursday."])
     }
 
     @Test func usesTheRawTextWhenCleanupTakesTooLong() async {
@@ -348,7 +395,7 @@ struct CleanupStepTests {
         clock.advance(2)
         controller.shortcutUp()
         await controller.pendingFinish?.value
-        #expect(system.directInserts == ["ask Tui Group about BrightCRM"])
+        #expect(system.directInserts == ["Ask Tui Group about BrightCRM"])
         #expect(controller.lastHeard == "um ask Tooey group about bright CRM")
     }
 
@@ -393,14 +440,42 @@ struct DriftCheckTests {
         #expect(DriftCheck.check(raw: "can you grab eggs", cleaned: "Sure, I can grab eggs.") != .accept)
     }
 
-    @Test func spotsFillersOnly() {
-        #expect(DriftCheck.isOnlyFillers("um"))
-        #expect(DriftCheck.isOnlyFillers("Um, er."))
-        #expect(!DriftCheck.isOnlyFillers("um yes"))
-    }
-
     @Test func rejectsNothing() {
         #expect(DriftCheck.check(raw: "hello", cleaned: "  ") != .accept)
+    }
+}
+
+struct FillersTests {
+    @Test(arguments: [
+        ("I've got the data bricks. Um... key? Can you remind me?", "I've got the data bricks. Key? Can you remind me?"),
+        ("So, uh, the deploy failed again. Um, can you check the logs?", "So the deploy failed again. Can you check the logs?"),
+        ("um so I think we should uh meet on Thursday", "So I think we should meet on Thursday"),
+        ("Is it ready, um?", "Is it ready?"),
+        ("Hmm. Ummm, erm, OK then.", "OK then."),
+        ("Um, er.", ""),
+        ("I bought an umbrella, a drum and some hummus.", "I bought an umbrella, a drum and some hummus."),
+        ("Her mum said ah well.", "Her mum said well."),
+    ])
+    func takesOutFillers(said: String, expected: String) {
+        #expect(Fillers.remove(said) == expected)
+    }
+
+    @Test func leavesRealWords() {
+        for word in ["um", "Umm", "uh", "er", "erm", "ah", "hmm", "mm"] { #expect(Fillers.isFiller(word)) }
+        for word in ["umbrella", "mum", "her", "error", "oh", "a", "m", "ha", "hum"] { #expect(!Fillers.isFiller(word)) }
+    }
+}
+
+struct UnpunctuateTests {
+    @Test(arguments: [
+        ("Hi Mike. New paragraph. Just following up.", "hi Mike new paragraph just following up"),
+        ("Let's go with the blue one. Actually, no, the green one.", "let's go with the blue one actually no the green one"),
+        ("I think so. I'll check utils.ts, it's 3.5 MB?", "I think so I'll check utils.ts it's 3.5 MB"),
+        ("Key? Can you remind me…", "key can you remind me"),
+        ("BrightCRM is ready. NASA too.", "BrightCRM is ready NASA too"),
+    ])
+    func takesOffTheEnginesPunctuation(heard: String, expected: String) {
+        #expect(AppleCleaner.unpunctuate(heard) == expected)
     }
 }
 

@@ -38,9 +38,6 @@ enum DriftCheck {
         case reject(String)
     }
 
-    /// Sounds the cleanup is meant to remove, so they don't count as words it dropped.
-    static let fillers: Set<String> = ["um", "uh", "er", "erm", "ah", "hmm", "mm"]
-
     static func check(raw: String, cleaned: String) -> Verdict {
         let rawWords = words(raw)
         let cleanedWords = words(cleaned)
@@ -53,7 +50,7 @@ enum DriftCheck {
         let added = cleanedWords.filter { !said.contains($0) && !isHarmless($0, said: said) }
         if added.count > rawWords.count / 30 { return .reject("new words: \(added.prefix(3).joined(separator: " "))") }
         // Corrections drop some words, but not half of them.
-        let spoken = rawWords.filter { !fillers.contains($0) }
+        let spoken = rawWords.filter { !Fillers.isFiller($0) }
         if spoken.count >= 6, cleanedWords.count * 2 < spoken.count { return .reject("much shorter") }
         return .accept
     }
@@ -76,16 +73,61 @@ enum DriftCheck {
         return false
     }
 
-    /// True when nothing but filler sounds was said ("um").
-    static func isOnlyFillers(_ text: String) -> Bool {
-        words(text).allSatisfy(fillers.contains)
-    }
-
     static func words(_ text: String) -> [String] {
         text.lowercased()
             .replacingOccurrences(of: "’", with: "'")
             .split { !$0.isLetter && !$0.isNumber && $0 != "'" }
             .map { $0.trimmingCharacters(in: CharacterSet(charactersIn: "'")) }
             .filter { !$0.isEmpty }
+    }
+}
+
+/// Takes filler sounds ("um", "uh", "er") out of a transcript. Runs before the cleanup, because the model
+/// leaves an already punctuated transcript ("Um... can you check?") as it is, and the raw text that goes
+/// in when the cleanup fails should have them taken out too.
+enum Fillers {
+    /// "um", "umm", "uh", "uhm", "er", "erm", "ah", "hmm", "mm" and longer spellings of them.
+    static func isFiller(_ word: String) -> Bool {
+        word.lowercased().wholeMatch(of: /u+m+|u+h+m*|e+r+m*|a+h+|h+m+|m{2,}/) != nil
+    }
+
+    static func remove(_ text: String) -> String {
+        var kept: [String] = []
+        var capitaliseNext = false
+        for token in text.split(separator: " ").map(String.init) {
+            let core = token.trimmingCharacters(in: .punctuationCharacters)
+            guard !core.isEmpty, isFiller(core) else {
+                var word = token
+                if capitaliseNext, let first = word.first, first.isLowercase {
+                    word = first.uppercased() + word.dropFirst()
+                }
+                capitaliseNext = false
+                kept.append(word)
+                continue
+            }
+            let after = String(token.reversed().prefix { !$0.isLetter }.reversed())
+            let startsSentence = kept.last.map(endsSentence) ?? true
+            if !startsSentence, let mark = after.first(where: { "?!".contains($0) }) ?? (after == "." ? "." : nil) {
+                // "is it ready, um?": the question mark belongs to what came before.
+                var last = kept.removeLast()
+                if last.last == "," { last.removeLast() }
+                if !endsSentence(last) { last.append(mark) }
+                kept.append(last)
+                capitaliseNext = true
+            } else {
+                // "So, uh, the deploy": the commas only marked the pause.
+                if after.contains(","), var last = kept.last, last.last == "," {
+                    last.removeLast()
+                    kept[kept.count - 1] = last
+                }
+                if startsSentence { capitaliseNext = true }
+            }
+        }
+        return kept.joined(separator: " ")
+    }
+
+    private static func endsSentence(_ word: String) -> Bool {
+        let end = word.trimmingCharacters(in: CharacterSet(charactersIn: "\"'”’)"))
+        return end.hasSuffix(".") || end.hasSuffix("?") || end.hasSuffix("!") || end.hasSuffix("…")
     }
 }

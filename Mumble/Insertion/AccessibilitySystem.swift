@@ -21,6 +21,15 @@ final class AXField: FocusedField {
 
 @MainActor
 final class AccessibilitySystem: SystemUI {
+    /// Seconds to wait for another app to answer an Accessibility call (macOS waits 6 by default). An app that's
+    /// busy or hung would otherwise freeze Mumble with it; if it doesn't answer, the text is pasted or copied.
+    static let messagingTimeout: Float = 1
+
+    init() {
+        // On the system-wide element, it's the timeout for every element.
+        AXUIElementSetMessagingTimeout(AXUIElementCreateSystemWide(), Self.messagingTimeout)
+    }
+
     func frontmostPID() -> pid_t? {
         NSWorkspace.shared.frontmostApplication?.processIdentifier
     }

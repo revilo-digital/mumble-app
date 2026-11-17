@@ -32,26 +32,45 @@ Push-to-talk dictation app for macOS (replaces Wispr Flow). See README.md for wh
   Settings shows "Last heard" (memory only) so the user can see what to add as heard-as.
 - **Never stuck working:** Apple's analyser never finishes with no audio, so `AppleTranscriber` skips it
   then; the controller also gives up 10 s after letting go.
+- **Microphone:** chosen in Settings (`microphone` = device UID, "" for Automatic, which follows Sound
+  settings). `MicrophoneChoice.pick` runs at every start. A MacBook's built-in mic records pure silence with
+  the lid closed (it stays the default input), so then another non-virtual mic is used, even over a chosen
+  built-in one. An unplugged choice falls back to Automatic.
+- **Recording:** `Microphone` uses a Core Audio input unit (AUHAL, input only, mono float at the device's
+  rate) bound to the device before it starts. Not `AVAudioEngine`: it starts on the default devices (an
+  aggregate when input and output differ), switching it failed with 'nope' and once hung the main thread for
+  good (2026-11-17). Each recording opens and closes on its own queue, so the main thread never waits on Core
+  Audio and a stuck device can't block the next recording. Failures come back through `onFailure`, and the
+  controller gives up with "Can't use the microphone" if no sound arrives within 3 s.
 - **Muting:** `SystemSoundMuter` mutes the default output (or sets its volume to 0) on start and restores it
   in `stopListening`, only if it changed it. It saves what it changed (`mutedOutput`) and restores at launch.
+  The Core Audio calls run in order on its own queue, never on the main thread.
 - **Idle cost:** the widget's view renders nothing while idle, or its animated dots redraw off screen.
 - **Speech:** `Transcriber` protocol. `AppleTranscriber` uses `SpeechTranscriber`/`SpeechAnalyzer` (macOS 26)
   with the `.transcription` preset, locale from `supportedLocale(equivalentTo: .current)` (en_GB here). Audio
   streams in while the user talks. The SDK is macOS 27; the deployment target is 26.0, so don't use APIs
   marked `anyAppleOS 27`. Check the SDK's `Speech.swiftinterface` rather than memory.
-- **Cleanup:** always runs, for every dictation. No skip rule and no "raw only" apps. `AppleCleaner` uses
+- **Cleanup:** always runs, for every dictation. No skip rule and no "raw only" apps. `Fillers.remove` takes
+  out um/uh/er first, in code: the transcriber already punctuates ("Um... key?"), and the model leaves
+  punctuated text as it is. `AppleCleaner` uses
   Foundation Models (Apple Intelligence) with `permissiveContentTransformations` guardrails, greedy sampling
   and a capped reply length, a fresh session per dictation, prewarmed on start. The prompt is
   `App: X / Transcript: … / Edited:` with worked examples in the instructions; that beat rules by a long way
   (rules alone and it answers questions, writes poems and code). Don't tell it "this is a code editor": it
   then writes code. The controller races it against a 4 s timeout; failures, timeouts and `DriftCheck`
-  rejections (any new content word, much longer or shorter) insert the raw text, and fillers alone insert
-  nothing. `AppleCleanerTests` run the real model on examples (skipped while Apple Intelligence is off) and
-  print each result and its time: rerun them after any prompt change.
+  rejections (any new content word, much longer or shorter) insert the raw text (fillers still removed),
+  and fillers alone insert nothing. `AppleCleanerTests` run the real model on examples (skipped while Apple Intelligence is off) and
+  print each result and its time: rerun them after any prompt change. The model gets the transcript without
+  the engine's punctuation and sentence capitals (`AppleCleaner.unpunctuate`): punctuated, it treats the
+  text as already edited and leaves "New paragraph." and "Actually, no" in. Tried on 2026-11-09, scored on
+  the 32 examples: unpunctuated and lowercased 31, as heard 29, examples as earlier transcript turns 27,
+  guided generation (`@Generable`) 25 (it copies the input). Adding or swapping prompt examples fixed one
+  case and made it answer others ("tell me a joke"). Cases it still gets wrong are `gap:` known issues.
+  `PrivateCloudComputeLanguageModel` (Apple's bigger model) is macOS 27 only.
 - **Inserting:** capture the focused AX element on shortcut down. Insert with `kAXSelectedTextAttribute` and
   verify via `kAXValueAttribute`. Otherwise paste with ⌘V only if that same element is still focused, and
   restore the clipboard. Otherwise copy and say "Copied, press ⌘V". Never insert into a different box or a
-  secure field.
+  secure field. AX calls time out after 1 s (macOS's default is 6), so a busy app can't freeze Mumble.
 - **Widget:** non-activating `NSPanel` that can't become key, so clicking ✕/✓ never steals focus.
 - **Privacy:** nothing leaves the Mac by default.
 

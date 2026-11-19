@@ -9,17 +9,17 @@ struct SpeechEngineView: View {
             Section {
                 Picker("Speech engine", selection: Binding(get: { speech.choice }, set: { speech.choose($0) })) {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("Apple")
-                        Text("Fastest. Works while you talk, so the text is ready as soon as you let go.")
-                            .font(.callout).foregroundStyle(.secondary)
-                    }
-                    .tag(SpeechEngineChoice.apple)
-                    VStack(alignment: .leading, spacing: 2) {
                         Text("Whisper")
                         Text("Better with accents and names, and uses what came before as context. About a second slower. Takes 630 MB of disk space.")
                             .font(.callout).foregroundStyle(.secondary)
                     }
                     .tag(SpeechEngineChoice.whisper)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Apple")
+                        Text("Fastest. Works while you talk, so the text is ready as soon as you let go.")
+                            .font(.callout).foregroundStyle(.secondary)
+                    }
+                    .tag(SpeechEngineChoice.apple)
                 }
                 .pickerStyle(.radioGroup)
                 .labelsHidden()

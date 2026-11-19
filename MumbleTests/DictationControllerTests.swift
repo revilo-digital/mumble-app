@@ -92,9 +92,27 @@ struct DictationControllerTests {
         clock.advance(2)
         controller.shortcutUp()
         #expect(controller.phase == .working)
-        try await Task.sleep(for: .milliseconds(300))
+        // 50 ms, plus a quarter of a second for each of the 2 s talked.
+        try await Task.sleep(for: .milliseconds(800))
         #expect(controller.phase == .notice("Didn't catch that"))
         #expect(system.directInserts.isEmpty)
+    }
+
+    /// Real: an 88 s dictation took Whisper 10.08 s, just past a flat 10 s limit, and was thrown away.
+    @Test func aLongDictationGetsLongerToTranscribe() async throws {
+        let controller = DictationController(
+            transcriber: SlowTranscriber(text: "A long one.", delay: .milliseconds(200)),
+            microphone: microphone,
+            inserter: TextInserter(system: system, clipboard: clipboard, restoreDelay: .zero),
+            now: { [clock] in clock.now },
+            noticeDuration: .seconds(60),
+            finishTimeout: .milliseconds(50)
+        )
+        controller.shortcutDown()
+        clock.advance(4) // a quarter of a second more for each second talked: 1 s
+        controller.shortcutUp()
+        await controller.pendingFinish?.value
+        #expect(system.directInserts == ["A long one."])
     }
 
     @Test func aMicrophoneThatSendsNoSoundGivesUp() async {
@@ -453,6 +471,26 @@ struct DriftCheckTests {
     @Test func rejectsNothing() {
         #expect(DriftCheck.check(raw: "hello", cleaned: "  ") != .accept)
     }
+
+    /// Real: the model gave Whisper's words back with only one full stop.
+    @Test func rejectsTheSameWordsWithoutTheirFullStops() {
+        let raw = "Several things. We added the tag, but we've disabled it because it can't record it. Also, we need to tell them why."
+        let cleaned = "Several things we added the tag but we've disabled it because it can't record it also we need to tell them why."
+        #expect(DriftCheck.check(raw: raw, cleaned: cleaned) == .reject("lost its full stops"))
+    }
+
+    @Test(arguments: [
+        // A correction takes out words, and the full stop that came with them.
+        ("Let's meet on Thursday. No wait, Friday at three.", "Let's meet on Friday at three."),
+        // Joining two sentences with the same words is fine if the line breaks stay.
+        ("Hi Sam. Thanks.", "Hi Sam,\nThanks."),
+        ("Thanks see you tomorrow", "Thanks, see you tomorrow."),
+        // One wrong break mended.
+        ("I've got the data bricks. Key? Can you remind me where to go? Check the job.", "I've got the data bricks key. Can you remind me where to go? Check the job."),
+    ])
+    func acceptsFewerFullStopsWhenTheWordsChanged(raw: String, cleaned: String) {
+        #expect(DriftCheck.check(raw: raw, cleaned: cleaned) == .accept)
+    }
 }
 
 struct FillersTests {
@@ -571,5 +609,55 @@ struct HandsFreeTests {
         controller.shortcutDown()
         await controller.pendingFinish?.value
         #expect(system.directInserts == ["Hello there."])
+    }
+}
+
+struct SlowTranscriber: Transcriber {
+    var text: String
+    var delay: Duration
+
+    func prepare() async throws {}
+
+    func transcribe(_ audio: AsyncStream<AudioChunk>, hints: [String], session: TranscriptionSession) async throws -> String {
+        for await _ in audio {}
+        try await Task.sleep(for: delay)
+        return text
+    }
+}
+
+struct DeadlineTests {
+    @Test func returnsWhatFinishesInTime() async {
+        let work = Task { () async throws -> String in "done" }
+        guard case .success("done") = await result(of: work, within: .seconds(5)) else {
+            Issue.record("expected the result")
+            return
+        }
+    }
+
+    /// Whisper may not stop when cancelled; the wait ends at the limit regardless.
+    @Test func givesUpAtTheLimitWithoutWaitingForWorkThatWontStop() async {
+        let work = Task.detached { () async throws -> String in
+            let end = Date().addingTimeInterval(1)
+            while Date() < end { await Task.yield() } // ignores cancellation
+            return "late"
+        }
+        let started = Date()
+        let outcome = await result(of: work, within: .milliseconds(50))
+        #expect(outcome == nil)
+        #expect(Date().timeIntervalSince(started) < 0.5)
+    }
+
+    @Test func passesOnAFailure() async {
+        struct Broke: Error {}
+        let work = Task { () async throws -> String in throw Broke() }
+        guard case .failure = await result(of: work, within: .seconds(5)) else {
+            Issue.record("expected the failure")
+            return
+        }
+    }
+
+    @Test func whisperGetsLongerForLongerDictations() {
+        #expect(SpeechRouter.whisperLimit(forSeconds: 5) < 7)
+        #expect(SpeechRouter.whisperLimit(forSeconds: 88) > 10.08 + 5)
     }
 }

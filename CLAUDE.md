@@ -31,7 +31,7 @@ Push-to-talk dictation app for macOS (replaces Wispr Flow). See README.md for wh
   cleanup prompt makes the model worse, so neither is relied on (hints are still passed to the engine).
   Settings shows "Last heard" (memory only) so the user can see what to add as heard-as.
 - **Never stuck working:** Apple's analyser never finishes with no audio, so `AppleTranscriber` skips it
-  then; the controller also gives up 10 s after letting go.
+  then; the controller also gives up 10 s after letting go, plus 0.25 s for each second talked. Whisper gets 6 s plus 0.15 s a second (`SpeechRouter.whisperLimit`), then Apple's text is used: an 88 s dictation took it 10.08 s while another app used the GPU, and was lost.
 - **Microphone:** chosen in Settings (`microphone` = device UID, "" for Automatic, which follows Sound
   settings). `MicrophoneChoice.pick` runs at every start. A MacBook's built-in mic records pure silence with
   the lid closed (it stays the default input), so then another non-virtual mic is used, even over a chosen
@@ -51,7 +51,7 @@ Push-to-talk dictation app for macOS (replaces Wispr Flow). See README.md for wh
   with the `.transcription` preset, locale from `supportedLocale(equivalentTo: .current)` (en_NZ on the author's Mac). Audio
   streams in while the user talks. The SDK is macOS 27; the deployment target is 26.0, so don't use APIs
   marked `anyAppleOS 27`. Check the SDK's `Speech.swiftinterface` rather than memory.
-- **Whisper:** Settings › Speech Engine chooses Apple or Whisper (`speechEngine`). `WhisperEngine` runs WhisperKit
+- **Whisper:** Settings › Speech Engine chooses Whisper (the default: it downloads at first launch) or Apple (`speechEngine`). `WhisperEngine` runs WhisperKit
   (argmax-oss-swift) large-v3 turbo 632 MB from `~/Library/Application Support/Mumble/Whisper`, downloaded from
   Settings. `SpeechRouter` uses Whisper only when chosen and loaded, and runs Apple alongside: Apple's text is used
   if Whisper fails, and if Apple heard nothing nothing goes in (Whisper invents "Thank you." from silence).
@@ -68,14 +68,14 @@ Push-to-talk dictation app for macOS (replaces Wispr Flow). See README.md for wh
   `App: X / Transcript: … / Edited:` with worked examples in the instructions; that beat rules by a long way
   (rules alone and it answers questions, writes poems and code). Don't tell it "this is a code editor": it
   then writes code. The controller races it against a 4 s timeout; failures, timeouts and `DriftCheck`
-  rejections (any new content word, much longer or shorter) insert the raw text (fillers still removed),
+  rejections (any new content word, much longer or shorter, or the same words with at least half their full stops gone: it sometimes hands the unpunctuated input back) insert the raw text (fillers still removed),
   and fillers alone insert nothing. `AppleCleanerTests` run the real model on examples (skipped while Apple Intelligence is off) and
   print each result and its time: rerun them after any prompt change. The model gets the transcript without
   the engine's punctuation and sentence capitals (`AppleCleaner.unpunctuate`): punctuated, it treats the
   text as already edited and leaves "New paragraph." and "Actually, no" in. Tried on 2026-11-09, scored on
   the 32 examples: unpunctuated and lowercased 31, as heard 29, examples as earlier transcript turns 27,
   guided generation (`@Generable`) 25 (it copies the input). Adding or swapping prompt examples fixed one
-  case and made it answer others ("tell me a joke"). Cases it still gets wrong are `gap:` known issues.
+  case and made it answer others ("tell me a joke"). Cases it still gets wrong are `gap:` known issues. A correction that refers back past a sentence ("use the tag. Is that right? Sorry, their app.") is beyond it: adding an example for it (2026-11-20) dropped the score from 32 to 29 of 35 (it answered "tell me a joke" and summarised).
   `PrivateCloudComputeLanguageModel` (Apple's bigger model) is macOS 27 only.
 - **Inserting:** capture the focused AX element on shortcut down. Insert with `kAXSelectedTextAttribute` and
   verify via `kAXValueAttribute`. Otherwise paste with ⌘V only if that same element is still focused, and

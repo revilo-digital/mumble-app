@@ -60,7 +60,14 @@ struct AppleCleanerTests {
         Example(said: "update the README dot md file with the new install steps full stop", app: terminal, has: ["README.md", "install"]),
         Example(said: "add a function called clean up that takes a string and returns a string", app: terminal, has: ["function called clean up"], hasNot: ["def ", "```", "{"]),
         Example(said: "can you fix the bug in dictation controller dot swift where the um the timeout never fires", app: terminal, has: ["timeout never fires"], hasNot: ["```", "import"]),
+        // Real dictations into Cursor (Whisper's text). A correction that comes after a question, and long ones it
+        // once gave back without their full stops.
+        Example(said: "Just confirming that this page from Shopify on how to do exactly what we're talking about confirms that you have to use the tag. Is that right? Sorry, their app.", app: cursor, has: ["use their app", "is that right?"], hasNot: ["the tag", "sorry"], gap: "too small to apply a correction that comes after a question"),
+        Example(said: "Several things. We added the tag, but we've disabled it because it can't record it. Also, we need to tell them why we're not recommending the use of Google's own app in Shopify because of security concerns.", app: cursor, has: ["Several things", "security concerns."], gap: "sometimes gives the words back without their full stops (DriftCheck then inserts what was heard)"),
+        Example(said: "This is all quite fussy just to get a conversion. Can you update the approach and scope written for the client? Copying in Tama, but don't worry about that. And the reasons why.", app: cursor, has: ["conversion.", "for the client?"], gap: "sometimes gives the words back without their full stops (DriftCheck then inserts what was heard)"),
     ]
+
+    static let cursor = CleanupContext(appName: "Cursor", bundleID: "com.todesktop.230313mzl4w4u92")
 
     @Test(arguments: examples)
     func cleansUp(_ example: Example) async throws {

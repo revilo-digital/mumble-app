@@ -326,8 +326,12 @@ final class DictationController {
         level = 0
         stopListening()
 
-        let timeout = Task { [finishTimeout] in
-            try? await Task.sleep(for: finishTimeout)
+        // Longer dictations take longer to transcribe: Whisper gets 6 s plus 0.15 s a second, then Apple's text is
+        // used, so this only fires if Apple's engine is stuck too.
+        let talked = releasedAt.timeIntervalSince(pressedAt ?? releasedAt)
+        let limit = finishTimeout + .seconds(talked * 0.25)
+        let timeout = Task {
+            try? await Task.sleep(for: limit)
             guard !Task.isCancelled, generation == self.generation, phase == .working else { return }
             Log.dictation.error("Transcription took too long")
             recording?.finish(heard: "", inserted: "", finishSeconds: nil)

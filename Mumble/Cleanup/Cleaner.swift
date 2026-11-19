@@ -52,7 +52,19 @@ enum DriftCheck {
         // Corrections drop some words, but not half of them.
         let spoken = rawWords.filter { !Fillers.isFiller($0) }
         if spoken.count >= 6, cleanedWords.count * 2 < spoken.count { return .reject("much shorter") }
+        // The model gets the words without their punctuation, and sometimes hands them back that way: the same
+        // words, run together into one sentence. The speech engine's full stops were better. One gone of several is
+        // fine: that's often a wrong break mended ("the data bricks. Key?" → "the data bricks key.").
+        let lost = sentenceEnds(raw) - sentenceEnds(cleaned)
+        if cleanedWords == rawWords, lost >= 2 || (lost > 0 && lost * 2 >= sentenceEnds(raw)) {
+            return .reject("lost its full stops")
+        }
         return .accept
+    }
+
+    /// Full stops, question marks, exclamation marks and line breaks.
+    private static func sentenceEnds(_ text: String) -> Int {
+        text.trimmingCharacters(in: .whitespacesAndNewlines).count(where: { ".?!…\n".contains($0) })
     }
 
     /// Words a tidy-up may add or change without adding meaning.

@@ -4,13 +4,15 @@ import Observation
 
 /// The speech engines the user can choose between.
 enum SpeechEngineChoice: String, CaseIterable, Identifiable {
-    case apple, whisper
+    case whisper, apple
     var id: Self { self }
 
     static let settingKey = "speechEngine"
 
+    /// Whisper unless the user chose Apple: on a new Mac it downloads at first launch, and Apple's engine is used
+    /// until it's ready.
     static var current: SpeechEngineChoice {
-        UserDefaults.standard.string(forKey: settingKey).flatMap(SpeechEngineChoice.init(rawValue:)) ?? .apple
+        UserDefaults.standard.string(forKey: settingKey).flatMap(SpeechEngineChoice.init(rawValue:)) ?? .whisper
     }
 }
 
@@ -30,6 +32,12 @@ final class SpeechRouter: Transcriber {
 
     func prepare() async throws {
         try await apple.prepare()
+    }
+
+    /// How long Whisper gets before Apple's text is used instead. It usually takes about 2 s, plus about 1 s for each
+    /// 30 s of speech; an 88 s dictation took 10 s while another app was using the GPU.
+    static func whisperLimit(forSeconds seconds: Double) -> Double {
+        6 + seconds * 0.15
     }
 
     func transcribe(_ audio: AsyncStream<AudioChunk>, hints: [String], session: TranscriptionSession) async throws -> String {
@@ -55,11 +63,21 @@ final class SpeechRouter: Transcriber {
         }
 
         let started = Date()
+        let seconds = Double(samples.count) / 16_000
+        let limit = Self.whisperLimit(forSeconds: seconds)
+        let prompt = session.prompt
+        let work = Task { [whisper, samples] in try await whisper.transcribe(samples, prompt: prompt) }
         let heardByWhisper: String
-        do {
-            heardByWhisper = try await whisper.transcribe(samples, prompt: session.prompt)
-        } catch {
+        switch await result(of: work, within: .seconds(limit)) {
+        case let .success(text):
+            heardByWhisper = text
+        case let .failure(error):
             Log.speech.error("Whisper failed, so used Apple's text: \(error.localizedDescription, privacy: .public)")
+            session.engine = "apple"
+            return try await appleText.value
+        case nil:
+            // Busy (another app using the GPU) or a very long dictation: Apple's text beats nothing.
+            Log.speech.error("Whisper took over \(limit, format: .fixed(precision: 0), privacy: .public)s for \(seconds, format: .fixed(precision: 0), privacy: .public)s of speech, so used Apple's text")
             session.engine = "apple"
             return try await appleText.value
         }

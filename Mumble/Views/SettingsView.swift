@@ -1,60 +1,120 @@
 import KeyboardShortcuts
 import SwiftUI
 
+/// The pages of Settings, down the side.
+enum SettingsPage: String, CaseIterable, Identifiable {
+    case general, shortcuts, microphone, words, speech, recordings, permissions
+    var id: Self { self }
+
+    var title: String {
+        switch self {
+        case .general: "General"
+        case .shortcuts: "Shortcuts"
+        case .microphone: "Microphone"
+        case .words: "Custom Words"
+        case .speech: "Speech Engine"
+        case .recordings: "Recordings"
+        case .permissions: "Permissions"
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .general: "gearshape"
+        case .shortcuts: "keyboard"
+        case .microphone: "mic"
+        case .words: "character.book.closed"
+        case .speech: "waveform"
+        case .recordings: "list.bullet.rectangle"
+        case .permissions: "lock.shield"
+        }
+    }
+}
+
 struct SettingsView: View {
     let permissions: Permissions
     let shortcuts: ShortcutStore
     let customWords: CustomWords
     let controller: DictationController
+    let recordings: RecordingList
+    let speech: SpeechEngines
+    @State private var page: SettingsPage? = .general
+
+    var body: some View {
+        NavigationSplitView {
+            List(SettingsPage.allCases, selection: $page) { page in
+                Label(page.title, systemImage: page.symbol).tag(page)
+            }
+            .navigationSplitViewColumnWidth(min: 170, ideal: 180, max: 220)
+        } detail: {
+            detail(for: page ?? .general)
+                .navigationTitle((page ?? .general).title)
+        }
+        .frame(minWidth: 820, minHeight: 460)
+        .onDisappear { shortcuts.stopRecording() }
+    }
+
+    @ViewBuilder private func detail(for page: SettingsPage) -> some View {
+        switch page {
+        case .general:
+            Form { GeneralSection() }.formStyle(.grouped)
+        case .shortcuts:
+            Form {
+                ForEach(TalkAction.allCases) { action in
+                    ShortcutSection(action: action, shortcuts: shortcuts, mouseAllowed: permissions.accessibility)
+                }
+            }
+            .formStyle(.grouped)
+        case .microphone:
+            Form { MicrophoneSection() }.formStyle(.grouped)
+        case .words:
+            Form { CustomWordsSection(customWords: customWords, lastHeard: controller.lastHeard) }.formStyle(.grouped)
+        case .speech:
+            SpeechEngineView(speech: speech)
+        case .recordings:
+            RecordingsView(recordings: recordings, customWords: customWords, speech: speech)
+        case .permissions:
+            Form {
+                Section { PermissionsView(permissions: permissions) }
+            }
+            .formStyle(.grouped)
+        }
+    }
+}
+
+/// Open at login, Dock icon, cleanup and muting.
+private struct GeneralSection: View {
     @State private var openAtLogin = LoginItem.isEnabled
     @State private var loginError: String?
     @AppStorage(SystemSoundMuter.settingKey) private var muteWhileTalking = true
     @AppStorage(DockIcon.settingKey) private var showInDock = true
 
     var body: some View {
-        Form {
-            ForEach(TalkAction.allCases) { action in
-                ShortcutSection(action: action, shortcuts: shortcuts, mouseAllowed: permissions.accessibility)
-            }
-            MicrophoneSection()
-            CustomWordsSection(customWords: customWords, lastHeard: controller.lastHeard)
-            Section {
-                Toggle("Open at login", isOn: $openAtLogin)
-                    .onChange(of: openAtLogin) { _, enabled in
-                        do {
-                            try LoginItem.set(enabled)
-                            loginError = nil
-                        } catch {
-                            loginError = error.localizedDescription
-                            openAtLogin = LoginItem.isEnabled
-                        }
+        Section {
+            Toggle("Open at login", isOn: $openAtLogin)
+                .onChange(of: openAtLogin) { _, enabled in
+                    do {
+                        try LoginItem.set(enabled)
+                        loginError = nil
+                    } catch {
+                        loginError = error.localizedDescription
+                        openAtLogin = LoginItem.isEnabled
                     }
-                if let loginError {
-                    Text(loginError).font(.callout).foregroundStyle(.red)
                 }
-                Toggle(isOn: $showInDock) {
-                    Text("Show in Dock")
-                    Text("Click it to open these settings. Mumble keeps running in the menu bar either way.")
-                }
-                .onChange(of: showInDock) { DockIcon.apply() }
-                CleanupStatus()
-                Toggle(isOn: $muteWhileTalking) {
-                    Text("Mute other sound while talking")
-                    Text("Music, videos and calls go quiet until you finish.")
-                }
-            } header: {
-                Text("General")
+            if let loginError {
+                Text(loginError).font(.callout).foregroundStyle(.red)
             }
-            Section {
-                PermissionsView(permissions: permissions)
-            } header: {
-                Text("Permissions")
+            Toggle(isOn: $showInDock) {
+                Text("Show in Dock")
+                Text("Click it to open these settings. Mumble keeps running in the menu bar either way.")
+            }
+            .onChange(of: showInDock) { DockIcon.apply() }
+            CleanupStatus()
+            Toggle(isOn: $muteWhileTalking) {
+                Text("Mute other sound while talking")
+                Text("Music, videos and calls go quiet until you finish.")
             }
         }
-        .formStyle(.grouped)
-        .frame(width: 480)
-        .fixedSize(horizontal: false, vertical: true)
-        .onDisappear { shortcuts.stopRecording() }
     }
 }
 

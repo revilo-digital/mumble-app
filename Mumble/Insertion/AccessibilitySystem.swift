@@ -50,6 +50,32 @@ final class AccessibilitySystem: SystemUI {
         return AXField(value as! AXUIElement)
     }
 
+    func windowTitle(in pid: pid_t) -> String? {
+        guard AXIsProcessTrusted() else { return nil }
+        let app = AXUIElementCreateApplication(pid)
+        var window: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(app, kAXFocusedWindowAttribute as CFString, &window) == .success,
+              let window, CFGetTypeID(window) == AXUIElementGetTypeID() else { return nil }
+        let title = Self.string(window as! AXUIElement, kAXTitleAttribute)
+        return title?.isEmpty == false ? title : nil
+    }
+
+    func textBeforeCursor(in field: any FocusedField, limit: Int) -> String? {
+        guard let element = (field as? AXField)?.element, let cursor = Self.selectedRange(element) else { return nil }
+        // Ask for just the text before the cursor, so a long document isn't copied over.
+        let start = max(0, cursor.location - limit)
+        var range = CFRange(location: start, length: cursor.location - start)
+        guard range.length > 0, let wanted = AXValueCreate(.cfRange, &range) else { return nil }
+        var value: CFTypeRef?
+        if AXUIElementCopyParameterizedAttributeValue(element, kAXStringForRangeParameterizedAttribute as CFString, wanted, &value) == .success,
+           let text = value as? String {
+            return text.isEmpty ? nil : text
+        }
+        guard let whole = Self.string(element, kAXValueAttribute) as NSString?, cursor.location <= whole.length else { return nil }
+        let text = whole.substring(with: NSRange(location: start, length: cursor.location - start))
+        return text.isEmpty ? nil : text
+    }
+
     func isAlive(_ field: any FocusedField) -> Bool {
         guard let field = field as? AXField else { return false }
         var role: CFTypeRef?

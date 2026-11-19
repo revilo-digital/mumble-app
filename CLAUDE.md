@@ -46,10 +46,20 @@ Push-to-talk dictation app for macOS (replaces Wispr Flow). See README.md for wh
   in `stopListening`, only if it changed it. It saves what it changed (`mutedOutput`) and restores at launch.
   The Core Audio calls run in order on its own queue, never on the main thread.
 - **Idle cost:** the widget's view renders nothing while idle, or its animated dots redraw off screen.
-- **Speech:** `Transcriber` protocol. `AppleTranscriber` uses `SpeechTranscriber`/`SpeechAnalyzer` (macOS 26)
-  with the `.transcription` preset, locale from `supportedLocale(equivalentTo: .current)` (en_GB here). Audio
+- **Speech:** `Transcriber` protocol (`transcribe(_:hints:session:)`; `TranscriptionSession` carries the context in
+  and the engine used out). `AppleTranscriber` uses `SpeechTranscriber`/`SpeechAnalyzer` (macOS 26)
+  with the `.transcription` preset, locale from `supportedLocale(equivalentTo: .current)` (en_NZ on the author's Mac). Audio
   streams in while the user talks. The SDK is macOS 27; the deployment target is 26.0, so don't use APIs
   marked `anyAppleOS 27`. Check the SDK's `Speech.swiftinterface` rather than memory.
+- **Whisper:** Settings › Speech Engine chooses Apple or Whisper (`speechEngine`). `WhisperEngine` runs WhisperKit
+  (argmax-oss-swift) large-v3 turbo 632 MB from `~/Library/Application Support/Mumble/Whisper`, downloaded from
+  Settings. `SpeechRouter` uses Whisper only when chosen and loaded, and runs Apple alongside: Apple's text is used
+  if Whisper fails, and if Apple heard nothing nothing goes in (Whisper invents "Thank you." from silence).
+  Whisper gets a prompt (`SpeechContext.prompt`): custom words, the cleaned window title, dictations from the last
+  15 min in the same app or 2 min in another, and the text before the cursor. The first load on a Mac takes about 4 min
+  (Neural Engine set-up, then cached: later launches take about 3 s); Apple is used until then. Mumble's memory
+  footprint with it loaded is about 90 MB (the model is memory-mapped). Recordings save which engine ran and what Apple heard.
+  Tested on real recordings (2026-11-19): only Whisper got an uncommon name right; Parakeet was fastest but least accurate.
 - **Cleanup:** always runs, for every dictation. No skip rule and no "raw only" apps. `Fillers.remove` takes
   out um/uh/er first, in code: the transcriber already punctuates ("Um... key?"), and the model leaves
   punctuated text as it is. `AppleCleaner` uses
@@ -72,6 +82,12 @@ Push-to-talk dictation app for macOS (replaces Wispr Flow). See README.md for wh
   restore the clipboard. Otherwise copy and say "Copied, press ⌘V". Never insert into a different box or a
   secure field. AX calls time out after 1 s (macOS's default is 6), so a busy app can't freeze Mumble.
 - **Widget:** non-activating `NSPanel` that can't become key, so clicking ✕/✓ never steals focus.
+- **Recordings:** Settings → "Keep recordings" (`keepRecordings`, off by default) saves the newest 50 dictations
+  in `~/Library/Application Support/Mumble/Recordings` (16 kHz WAV plus JSON: app, window title, text before
+  the cursor, what was heard and inserted; add `"meant"` by hand to score). `scripts/bench/setup.sh` sets up
+  Whisper (WhisperKit) and Parakeet (FluidAudio) in `~/Library/Caches/MumbleBench`; `scripts/bench/compare.py`
+  runs the recordings through each engine and writes `comparison.html`. Whisper's first model load on the
+  Neural Engine takes about 3.5 minutes, every time from the command line.
 - **Privacy:** nothing leaves the Mac by default.
 
 ## Conventions

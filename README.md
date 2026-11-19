@@ -3,7 +3,7 @@
 Free, private push-to-talk dictation for the Mac. A home-made alternative to Wispr Flow.
 
 Hold a shortcut or a mouse button, speak, let go, and the text goes into the box you were typing in. Speech is
-recognised on your Mac by Apple's on-device engine, then tidied by Apple Intelligence's on-device model:
+recognised on your Mac by Apple's on-device engine (or Whisper, if you choose it), then tidied by Apple Intelligence's on-device model:
 fillers go, spoken corrections ("no wait, Friday") are applied, spoken punctuation ("new paragraph", "full
 stop") becomes the real thing, and capitals and punctuation are fixed. It takes about a quarter of a second.
 
@@ -62,6 +62,14 @@ Intelligence is off). The rest use fakes, so no microphone is needed.
 - **Custom words** (Settings): names and terms spelled your way. They're fixed even when said in pieces
   ("bright CRM" becomes BrightCRM). If Mumble hears one as something else ("Tooey group" for Tui Group),
   add that under **Also heard as**; **Last heard** shows what the last dictation came out as.
+- **Whisper** (Settings › Speech Engine): OpenAI's Whisper large-v3 turbo, running on your Mac's Neural
+  Engine. It's better with accents and names than Apple's engine, and it's told what came before (your custom
+  words, the window title, what you dictated in the last few minutes and the text before the cursor). It's a
+  one-off 630 MB download and adds about a second after you let go. The first time it loads, setting it up for
+  your Mac takes a few minutes; Apple's engine is used until it's ready, and whenever Whisper fails.
+- **Recordings** (Settings › Recordings, off by default): keeps your last 50 dictations on your Mac. Play
+  them back, mark them right or wrong, type what you actually said, try Whisper on them, and add names it
+  missed to your custom words.
 - **✕ or Esc** cancels. Nothing is inserted.
 - Music, videos and calls are muted while you talk, and come back when you finish. Turn this off in
   Settings › General.
@@ -90,9 +98,11 @@ Each dictation logs how long it took from letting go to the text going in, and h
 
 ## How it's built
 
-SwiftUI menu bar app, Swift 6. Speech uses `SpeechAnalyzer`/`SpeechTranscriber`, cleanup uses the Foundation
+SwiftUI menu bar app, Swift 6. Speech uses `SpeechAnalyzer`/`SpeechTranscriber`, or
+[WhisperKit](https://github.com/argmaxinc/argmax-oss-swift) for Whisper, cleanup uses the Foundation
 Models framework, and shortcuts use [KeyboardShortcuts](https://github.com/sindresorhus/KeyboardShortcuts).
-`CLAUDE.md` has the design decisions and why.
+`scripts/bench` compares Apple's
+engine, Whisper and Parakeet on your saved recordings. `CLAUDE.md` has the design decisions and why.
 
 ## Licence
 

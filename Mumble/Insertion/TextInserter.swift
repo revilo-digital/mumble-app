@@ -1,4 +1,4 @@
-import Foundation
+import AppKit
 
 /// The text box that was focused when the shortcut went down.
 protocol FocusedField: AnyObject {
@@ -27,6 +27,10 @@ protocol SystemUI: AnyObject {
     func frontmostPID() -> pid_t?
     func isRunning(_ pid: pid_t) -> Bool
     func focusedField(in pid: pid_t) -> (any FocusedField)?
+    /// The title of the app's focused window.
+    func windowTitle(in pid: pid_t) -> String?
+    /// Up to `limit` characters just before the cursor.
+    func textBeforeCursor(in field: any FocusedField, limit: Int) -> String?
     func isAlive(_ field: any FocusedField) -> Bool
     /// Inserts `text` at the cursor (replacing any selection) and checks it landed.
     func insertDirectly(_ text: String, into field: any FocusedField) async -> Bool
@@ -65,6 +69,18 @@ final class TextInserter {
     func captureTarget() -> TextTarget? {
         guard let pid = system.frontmostPID() else { return nil }
         return TextTarget(pid: pid, field: system.focusedField(in: pid))
+    }
+
+    /// What's around the text box: the app, its window and the text before the cursor (never a password box).
+    func context(of target: TextTarget?) -> DictationContext {
+        let pid = target?.pid ?? system.frontmostPID()
+        let app = pid.flatMap { NSRunningApplication(processIdentifier: $0) }
+        var context = DictationContext(app: app?.localizedName, bundleID: app?.bundleIdentifier)
+        if let pid { context.windowTitle = system.windowTitle(in: pid) }
+        if let field = target?.field, !field.isSecure {
+            context.textBefore = system.textBeforeCursor(in: field, limit: 500)
+        }
+        return context
     }
 
     func insert(_ text: String, into target: TextTarget?) async -> InsertOutcome {

@@ -61,6 +61,14 @@ final class DictationController {
     private(set) var lastHeard: String?
     @ObservationIgnored private var dictationWords: [CustomWord] = []
     @ObservationIgnored var onMicrophoneBlocked: () -> Void = {}
+    /// Starts saving the dictation's audio, if recordings are kept (`Recordings.begin`).
+    @ObservationIgnored var startRecording: () -> RecordingWriter? = { nil }
+    @ObservationIgnored private var recording: RecordingWriter?
+    /// The app, window and text around the text box, for the dictation in progress.
+    @ObservationIgnored private(set) var dictationContext = DictationContext()
+    @ObservationIgnored private var session = TranscriptionSession()
+    /// Recent dictations, newest last, as context for the next.
+    @ObservationIgnored private(set) var earlier: [SpeechContext.Earlier] = []
 
     @ObservationIgnored private var target: TextTarget?
     @ObservationIgnored private var pressedAt: Date?
@@ -244,9 +252,15 @@ final class DictationController {
         heardAudio = false
         let generation = generation
         let (stream, continuation) = AsyncStream.makeStream(of: AudioChunk.self)
+        recording?.discard()
+        let recording = startRecording()
+        self.recording = recording
         do {
             try microphone.start(
-                onChunk: { continuation.yield($0) },
+                onChunk: {
+                    continuation.yield($0)
+                    recording?.append($0)
+                },
                 onLevel: { [weak self] level in
                     Task { @MainActor in self?.heard(level, generation: generation) }
                 },
@@ -257,14 +271,21 @@ final class DictationController {
         } catch {
             Log.dictation.error("Microphone didn't start: \(error.localizedDescription, privacy: .public)")
             continuation.finish()
+            discardRecording()
             showNotice("Can't use the microphone")
             return
         }
         audio = continuation
         muter?.mute()
-        transcription = Task { [transcriber] in try await transcriber.transcribe(stream, hints: hints) }
+        let session = TranscriptionSession()
+        self.session = session
+        transcription = Task { [transcriber] in try await transcriber.transcribe(stream, hints: hints, session: session) }
         phase = .listening
         Log.dictation.notice("Listening")
+        // Read after the microphone has started, so a slow app can't hold it up.
+        dictationContext = inserter.context(of: target)
+        recording?.context = dictationContext
+        session.prompt = SpeechContext.prompt(words: hints, context: dictationContext, earlier: earlier, now: now())
         pendingMicrophoneCheck?.cancel()
         pendingMicrophoneCheck = Task { [microphoneTimeout] in
             try? await Task.sleep(for: microphoneTimeout)
@@ -295,6 +316,10 @@ final class DictationController {
         let target = target
         let context = cleanupContext
         let words = dictationWords
+        let recording = recording
+        self.recording = nil
+        let session = session
+        let bundleID = dictationContext.bundleID
         clearTapWait()
         phase = .working
         level = 0
@@ -304,6 +329,7 @@ final class DictationController {
             try? await Task.sleep(for: finishTimeout)
             guard !Task.isCancelled, generation == self.generation, phase == .working else { return }
             Log.dictation.error("Transcription took too long")
+            recording?.finish(heard: "", inserted: "", finishSeconds: nil)
             self.generation += 1
             transcription?.cancel()
             transcription = nil
@@ -317,6 +343,7 @@ final class DictationController {
             } catch {
                 guard generation == self.generation else { return }
                 Log.dictation.error("Transcription failed: \(error.localizedDescription, privacy: .public)")
+                recording?.finish(heard: "", inserted: "", finishSeconds: nil)
                 showNotice("Didn't catch that")
                 return
             }
@@ -324,6 +351,7 @@ final class DictationController {
             transcription = nil
             let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmed.isEmpty else {
+                recording?.finish(heard: "", inserted: "", finishSeconds: nil)
                 showNotice("Didn't catch that")
                 return
             }
@@ -332,6 +360,7 @@ final class DictationController {
             let cleaned = CustomSpelling.apply(words, to: await cleanUp(spelled, context: context))
             guard generation == self.generation else { return }
             guard !cleaned.isEmpty else {
+                recording?.finish(heard: trimmed, inserted: "", finishSeconds: nil)
                 showNotice("Didn't catch that")
                 return
             }
@@ -339,6 +368,9 @@ final class DictationController {
             guard generation == self.generation else { return }
             let timing = now().timeIntervalSince(releasedAt)
             lastTiming = timing
+            recording?.finish(heard: trimmed, inserted: cleaned, finishSeconds: timing, engine: session.engine, alsoHeard: session.alsoHeard)
+            earlier.append(.init(text: cleaned, bundleID: bundleID, date: now()))
+            earlier = Array(earlier.suffix(5))
             Log.dictation.notice("Done in \(timing, format: .fixed(precision: 2), privacy: .public)s: \(String(describing: outcome), privacy: .public)")
             if outcome == .copied {
                 showNotice("Copied, press ⌘V")
@@ -406,12 +438,18 @@ final class DictationController {
     /// Drops the dictation in progress without inserting anything.
     private func abandon() {
         generation += 1
+        discardRecording()
         clearTapWait()
         stopListening()
         transcription?.cancel()
         transcription = nil
         target = nil
         level = 0
+    }
+
+    private func discardRecording() {
+        recording?.discard()
+        recording = nil
     }
 
     private func stopListening() {

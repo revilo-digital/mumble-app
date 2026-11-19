@@ -33,6 +33,12 @@ final class FakeSystem: SystemUI {
     func isRunning(_ pid: pid_t) -> Bool { running.contains(pid) }
     func focusedField(in pid: pid_t) -> (any FocusedField)? { focused[pid] }
     func isAlive(_ field: any FocusedField) -> Bool { !dead.contains((field as! FakeField).id) }
+    var windowTitles: [pid_t: String] = [:]
+    var textBefore: [Int: String] = [:]
+    func windowTitle(in pid: pid_t) -> String? { windowTitles[pid] }
+    func textBeforeCursor(in field: any FocusedField, limit: Int) -> String? {
+        textBefore[(field as! FakeField).id].map { String($0.suffix(limit)) }
+    }
 
     func insertDirectly(_ text: String, into field: any FocusedField) async -> Bool {
         guard acceptsDirectInsert else { return false }
@@ -149,7 +155,7 @@ actor FakeCleaner: Cleaner {
 struct StuckTranscriber: Transcriber {
     func prepare() async throws {}
 
-    func transcribe(_ audio: AsyncStream<AudioChunk>, hints: [String]) async throws -> String {
+    func transcribe(_ audio: AsyncStream<AudioChunk>, hints: [String], session: TranscriptionSession) async throws -> String {
         for await _ in audio {}
         try await Task.sleep(for: .seconds(3600))
         return ""
@@ -159,14 +165,24 @@ struct StuckTranscriber: Transcriber {
 /// Reads all the audio, then returns a fixed transcript.
 struct FakeTranscriber: Transcriber {
     var text: String
+    /// The context each dictation was given, as it stood when the audio ended.
+    var prompts: PromptLog? = nil
 
     func prepare() async throws {}
 
-    func transcribe(_ audio: AsyncStream<AudioChunk>, hints: [String]) async throws -> String {
+    func transcribe(_ audio: AsyncStream<AudioChunk>, hints: [String], session: TranscriptionSession) async throws -> String {
         for await _ in audio {}
         try Task.checkCancellation()
+        prompts?.add(session.prompt)
         return text
     }
+}
+
+final class PromptLog: @unchecked Sendable {
+    private let lock = NSLock()
+    private var items: [String] = []
+    func add(_ prompt: String) { lock.withLock { items.append(prompt) } }
+    var all: [String] { lock.withLock { items } }
 }
 
 /// A clock the tests move by hand.

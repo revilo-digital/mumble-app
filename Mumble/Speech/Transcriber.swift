@@ -1,14 +1,54 @@
 import AVFoundation
 import Speech
+import Synchronization
 import os
 
-/// Turns audio into raw text. Swappable, so another engine (Parakeet) can be added later.
+/// Turns audio into raw text. Swappable: Apple's engine, or Whisper.
 protocol Transcriber: Sendable {
     /// Gets the engine ready (speech model installed), so the first dictation doesn't wait for it.
     func prepare() async throws
     /// Reads audio until the stream finishes, then returns the text. Cancelling the task throws.
-    /// `hints` are the user's custom words, for engines that can listen out for them.
-    func transcribe(_ audio: AsyncStream<AudioChunk>, hints: [String]) async throws -> String
+    /// `hints` are the user's custom words, for engines that can listen out for them. `session` carries the
+    /// context in (for Whisper) and which engine was used out.
+    func transcribe(_ audio: AsyncStream<AudioChunk>, hints: [String], session: TranscriptionSession) async throws -> String
+}
+
+extension Transcriber {
+    func transcribe(_ audio: AsyncStream<AudioChunk>, hints: [String] = []) async throws -> String {
+        try await transcribe(audio, hints: hints, session: TranscriptionSession())
+    }
+}
+
+/// One dictation's exchange with the speech engine. The context is filled in just after listening starts (reading
+/// it can be slow) and read when the audio ends; the engine says which one it was.
+final class TranscriptionSession: Sendable {
+    private let state = Mutex(State())
+
+    private struct State {
+        var prompt = ""
+        var engine = "apple"
+        var alsoHeard: String?
+    }
+
+    init() {}
+
+    /// For Whisper: custom words and what came just before.
+    var prompt: String {
+        get { state.withLock { $0.prompt } }
+        set { state.withLock { $0.prompt = newValue } }
+    }
+
+    /// "apple" or "whisper".
+    var engine: String {
+        get { state.withLock { $0.engine } }
+        set { state.withLock { $0.engine = newValue } }
+    }
+
+    /// What the other engine heard, when both ran (Apple's text when Whisper was used).
+    var alsoHeard: String? {
+        get { state.withLock { $0.alsoHeard } }
+        set { state.withLock { $0.alsoHeard = newValue } }
+    }
 }
 
 enum TranscriptionError: Error {
@@ -23,7 +63,7 @@ actor AppleTranscriber: Transcriber {
         _ = try await readyLocale()
     }
 
-    func transcribe(_ audio: AsyncStream<AudioChunk>, hints: [String] = []) async throws -> String {
+    func transcribe(_ audio: AsyncStream<AudioChunk>, hints: [String], session: TranscriptionSession) async throws -> String {
         let locale = try await readyLocale()
         let module = SpeechTranscriber(locale: locale, preset: .transcription)
         let analyzer = SpeechAnalyzer(

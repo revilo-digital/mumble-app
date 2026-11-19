@@ -9,10 +9,12 @@ final class AppModel {
     let permissions = Permissions()
     let shortcuts = ShortcutStore()
     let customWords = CustomWords()
+    let recordings = RecordingList()
+    let speech: SpeechEngines
     @ObservationIgnored private let input = InputListener()
     let controller: DictationController
     @ObservationIgnored private let muter = SystemSoundMuter()
-    @ObservationIgnored private let transcriber = AppleTranscriber()
+    @ObservationIgnored private let transcriber: SpeechRouter
     @ObservationIgnored private var widget: WidgetController?
     @ObservationIgnored private let settingsWindow = AppWindow()
     @ObservationIgnored private let setupWindow = AppWindow()
@@ -21,6 +23,9 @@ final class AppModel {
     static let isTesting = ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
 
     private init() {
+        let speech = SpeechEngines()
+        self.speech = speech
+        transcriber = SpeechRouter(apple: AppleTranscriber(), whisper: speech.whisper)
         controller = DictationController(
             transcriber: transcriber,
             microphone: Microphone(),
@@ -41,6 +46,7 @@ final class AppModel {
         }
         controller.onMicrophoneBlocked = { [weak self] in self?.showSetup() }
         controller.customWords = { [customWords] in customWords.words }
+        controller.startRecording = { Recordings.begin() }
         let press: (TalkAction, Bool) -> Void = { [controller] action, down in
             switch (action, down) {
             case (.pushToTalk, true): controller.shortcutDown()
@@ -69,6 +75,7 @@ final class AppModel {
         input.start()
         widget = WidgetController(controller: controller)
         LoginItem.setUpOnFirstLaunch()
+        speech.launch()
         Task { [transcriber] in
             do {
                 try await transcriber.prepare()
@@ -93,8 +100,11 @@ final class AppModel {
     }
 
     func showSettings() {
-        settingsWindow.show(title: "Mumble Settings") {
-            SettingsView(permissions: permissions, shortcuts: shortcuts, customWords: customWords, controller: controller)
+        settingsWindow.show(title: "Mumble Settings", resizable: true, initialSize: NSSize(width: 940, height: 640)) {
+            SettingsView(
+                permissions: permissions, shortcuts: shortcuts, customWords: customWords, controller: controller,
+                recordings: recordings, speech: speech
+            )
         }
     }
 }

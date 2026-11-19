@@ -70,6 +70,10 @@ Intelligence is off). The rest use fakes, so no microphone is needed.
 - **Recordings** (Settings › Recordings, off by default): keeps your last 50 dictations on your Mac. Play
   them back, mark them right or wrong, type what you actually said, try Whisper on them, and add names it
   missed to your custom words.
+- **Carries on where you were.** Dictate partway through a sentence and it starts in lower case ("I've just
+  sent" + "an internal email…"), with a space if you need one; after a full stop or on a new line it starts
+  with a capital. Names keep theirs. This needs the app to share the text before the cursor: most do, and
+  Chrome, Edge, Brave and Arc do from the second dictation after they open.
 - **✕ or Esc** cancels. Nothing is inserted.
 - Music, videos and calls are muted while you talk, and come back when you finish. Turn this off in
   Settings › General.

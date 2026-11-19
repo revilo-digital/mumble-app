@@ -44,10 +44,28 @@ final class AccessibilitySystem: SystemUI {
         let app = AXUIElementCreateApplication(pid)
         // Electron apps (Slack, Cursor) only expose their text boxes once asked to.
         AXUIElementSetAttributeValue(app, "AXManualAccessibility" as CFString, kCFBooleanTrue)
+        // Chromium browsers ignore that, and only expose web pages to screen readers, which set this. They build
+        // the page's tree a moment later, so the first dictation after the browser opens may still miss it.
+        if Self.isChromium(pid) {
+            AXUIElementSetAttributeValue(app, "AXEnhancedUserInterface" as CFString, kCFBooleanTrue)
+        }
         var value: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(app, kAXFocusedUIElementAttribute as CFString, &value) == .success,
-              let value, CFGetTypeID(value) == AXUIElementGetTypeID() else { return nil }
+        let error = AXUIElementCopyAttributeValue(app, kAXFocusedUIElementAttribute as CFString, &value)
+        guard error == .success, let value, CFGetTypeID(value) == AXUIElementGetTypeID() else {
+            Log.insertion.notice("No focused text box (Accessibility error \(error.rawValue, privacy: .public))")
+            return nil
+        }
         return AXField(value as! AXUIElement)
+    }
+
+    static let chromiumBrowsers: Set<String> = [
+        "com.google.Chrome", "com.google.Chrome.beta", "com.google.Chrome.dev", "com.google.Chrome.canary",
+        "org.chromium.Chromium", "com.microsoft.edgemac", "com.brave.Browser", "company.thebrowser.Browser",
+        "com.vivaldi.Vivaldi", "com.operasoftware.Opera",
+    ]
+
+    private static func isChromium(_ pid: pid_t) -> Bool {
+        NSRunningApplication(processIdentifier: pid)?.bundleIdentifier.map(chromiumBrowsers.contains) ?? false
     }
 
     func windowTitle(in pid: pid_t) -> String? {
@@ -61,7 +79,14 @@ final class AccessibilitySystem: SystemUI {
     }
 
     func textBeforeCursor(in field: any FocusedField, limit: Int) -> String? {
-        guard let element = (field as? AXField)?.element, let cursor = Self.selectedRange(element) else { return nil }
+        guard let element = (field as? AXField)?.element else { return nil }
+        guard let cursor = Self.selectedRange(element) else {
+            // Only the kind of box, never its text: to see which apps don't share the cursor position.
+            let role = Self.string(element, kAXRoleAttribute) ?? "none"
+            let hasValue = Self.string(element, kAXValueAttribute) != nil
+            Log.insertion.notice("No cursor position from a \(role, privacy: .public) (has value: \(hasValue, privacy: .public))")
+            return nil
+        }
         // Ask for just the text before the cursor, so a long document isn't copied over.
         let start = max(0, cursor.location - limit)
         var range = CFRange(location: start, length: cursor.location - start)
@@ -71,7 +96,10 @@ final class AccessibilitySystem: SystemUI {
            let text = value as? String {
             return text.isEmpty ? nil : text
         }
-        guard let whole = Self.string(element, kAXValueAttribute) as NSString?, cursor.location <= whole.length else { return nil }
+        guard let whole = Self.string(element, kAXValueAttribute) as NSString?, cursor.location <= whole.length else {
+            Log.insertion.notice("No text before the cursor from a \(Self.string(element, kAXRoleAttribute) ?? "none", privacy: .public)")
+            return nil
+        }
         let text = whole.substring(with: NSRange(location: start, length: cursor.location - start))
         return text.isEmpty ? nil : text
     }

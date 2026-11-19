@@ -81,6 +81,11 @@ Push-to-talk dictation app for macOS (replaces Wispr Flow). See README.md for wh
   verify via `kAXValueAttribute`. Otherwise paste with ⌘V only if that same element is still focused, and
   restore the clipboard. Otherwise copy and say "Copied, press ⌘V". Never insert into a different box or a
   secure field. AX calls time out after 1 s (macOS's default is 6), so a busy app can't freeze Mumble.
+- **Carrying on:** `Continuation.fit` uses the text before the cursor (read after the microphone starts): after a
+  word or comma the first word goes lower case unless it's "I", has capitals inside, is a custom word, isn't in the
+  spell checker in lower case (names, days) or `NLTagger` calls it a name; after `.!?` or a new line it gets a
+  capital; a space is added if needed. Chromium browsers only expose web pages after `AXEnhancedUserInterface` is set
+  (they ignore Electron's `AXManualAccessibility`), so the first dictation after the browser opens misses.
 - **Widget:** non-activating `NSPanel` that can't become key, so clicking ✕/✓ never steals focus.
 - **Recordings:** Settings → "Keep recordings" (`keepRecordings`, off by default) saves the newest 50 dictations
   in `~/Library/Application Support/Mumble/Recordings` (16 kHz WAV plus JSON: app, window title, text before

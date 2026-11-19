@@ -115,6 +115,7 @@ struct SpacingTests {
         ("(", "Hello", ""),
         ("d", ", then", ""),
         ("d", ".", ""),
+        ("d", " already spaced", ""),
     ] as [(Character?, String, String)])
     func spaceBeforeInsertedText(previous: Character?, text: String, expected: String) {
         #expect(Spacing.prefix(after: previous, inserting: text) == expected)
@@ -286,5 +287,41 @@ struct ModifierKeyTests {
         keys.release(Self.leftCommand)
         await drain()
         #expect(events.log.isEmpty)
+    }
+}
+
+@MainActor
+struct ContinuationTests {
+    @Test(arguments: [
+        // Mid-sentence: carries on in lower case, with a space if there isn't one.
+        ("I’ve just sent\u{a0}", "An internal email to all stakeholders.", "an internal email to all stakeholders."),
+        ("I’ve just sent", "An internal email.", " an internal email."),
+        ("If it works,", "Ship it.", " ship it."),
+        // A new sentence or line starts with a capital.
+        ("Thanks for that. ", "Can you check?", "Can you check?"),
+        ("Thanks for that.", "Can you check?", " Can you check?"),
+        ("thanks for that. ", "can you check?", "Can you check?"),
+        ("Hi Tama,\n", "Thanks for the update.", "Thanks for the update."),
+        ("He said “no.” ", "Then he left.", "Then he left."),
+        ("Done. ", "iPhone works now.", "iPhone works now."),
+        // Names, "I", acronyms and words with capitals inside keep theirs.
+        ("Send it to ", "Rawiri tomorrow.", "Rawiri tomorrow."),
+        ("Let's meet on ", "Monday at ten.", "Monday at ten."),
+        ("Honestly ", "I think so.", "I think so."),
+        ("Honestly ", "I'm not sure.", "I'm not sure."),
+        ("We use ", "JavaScript here.", "JavaScript here."),
+        ("Check the ", "API docs.", "API docs."),
+        // Nothing before the cursor, or something ambiguous: left as it is.
+        (nil, "Hello.", "Hello."),
+        ("", "Hello.", "Hello."),
+        ("Note: ", "The build failed.", "The build failed."),
+    ] as [(String?, String, String)])
+    func fitsTheTextBeforeTheCursor(before: String?, text: String, expected: String) {
+        #expect(Continuation.fit(text, after: before, isEverydayWord: RecordingList.isEverydayWord) == expected)
+    }
+
+    @Test func customWordsKeepTheirCapital() {
+        #expect(Continuation.fit("Mumble is better.", after: "Honestly ", isEverydayWord: RecordingList.isEverydayWord) == "mumble is better.")
+        #expect(Continuation.fit("Mumble is better.", after: "Honestly ", keep: ["Mumble"], isEverydayWord: RecordingList.isEverydayWord) == "Mumble is better.")
     }
 }

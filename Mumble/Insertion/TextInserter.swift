@@ -77,7 +77,8 @@ final class TextInserter {
         let app = pid.flatMap { NSRunningApplication(processIdentifier: $0) }
         var context = DictationContext(app: app?.localizedName, bundleID: app?.bundleIdentifier)
         if let pid { context.windowTitle = system.windowTitle(in: pid) }
-        if let field = target?.field, !field.isSecure {
+        // Read again if there was no text box at the start: browsers can take a moment to expose it.
+        if let field = target?.field ?? pid.flatMap(system.focusedField(in:)), !field.isSecure {
             context.textBefore = system.textBeforeCursor(in: field, limit: 500)
         }
         return context
@@ -131,7 +132,7 @@ final class TextInserter {
 /// Whether to put a space before inserted text, based on the character before the cursor.
 enum Spacing {
     static func prefix(after previous: Character?, inserting text: String) -> String {
-        guard let previous, let first = text.first else { return "" }
+        guard let previous, let first = text.first, !first.isWhitespace else { return "" }
         if previous.isWhitespace || previous.isNewline { return "" }
         if "([{\"'“‘/-–—@#".contains(previous) { return "" }
         if ".,!?;:)]}…%".contains(first) { return "" }

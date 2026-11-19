@@ -44,6 +44,16 @@ struct DictationControllerTests {
         #expect(controller.lastTiming != nil)
     }
 
+    @Test func carriesOnFromTheTextBeforeTheCursor() async {
+        system.textBefore[1] = "I’ve just sent "
+        let controller = makeController(says: "An internal email to all stakeholders.")
+        controller.shortcutDown()
+        clock.advance(2)
+        controller.shortcutUp()
+        await controller.pendingFinish?.value
+        #expect(system.directInserts == ["an internal email to all stakeholders."])
+    }
+
     @Test func otherSoundIsMutedOnlyWhileListening() async {
         let controller = makeController()
         controller.shortcutDown()

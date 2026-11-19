@@ -320,6 +320,7 @@ final class DictationController {
         self.recording = nil
         let session = session
         let bundleID = dictationContext.bundleID
+        let textBefore = dictationContext.textBefore
         clearTapWait()
         phase = .working
         level = 0
@@ -357,14 +358,17 @@ final class DictationController {
             }
             lastHeard = trimmed
             let spelled = CustomSpelling.apply(words, to: trimmed)
-            let cleaned = CustomSpelling.apply(words, to: await cleanUp(spelled, context: context))
+            let cleanedUp = CustomSpelling.apply(words, to: await cleanUp(spelled, context: context))
             guard generation == self.generation else { return }
-            guard !cleaned.isEmpty else {
+            guard !cleanedUp.isEmpty else {
                 recording?.finish(heard: trimmed, inserted: "", finishSeconds: nil)
                 showNotice("Didn't catch that")
                 return
             }
-            let outcome = await inserter.insert(cleaned, into: target)
+            // Carries on from the text before the cursor: lower case mid-sentence, with a space if needed.
+            let fitted = Continuation.fit(cleanedUp, after: textBefore, keep: Set(words.map(\.word)), isEverydayWord: RecordingList.isEverydayWord)
+            let cleaned = fitted.trimmingCharacters(in: .whitespaces)
+            let outcome = await inserter.insert(fitted, into: target)
             guard generation == self.generation else { return }
             let timing = now().timeIntervalSince(releasedAt)
             lastTiming = timing
